@@ -123,6 +123,11 @@ tokio = { workspace = true, features = ["net", "test-util"] } # ensure this rema
 trillium-testing.workspace = true
 trycmd = { workspace = true }
 wait-timeout = { workspace = true }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [build-dependencies]
 rustc_version = { workspace = true }
+
+[[bench]]
+name = "benches"
+harness = false

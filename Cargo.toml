@@ -24,6 +24,7 @@ version = "0.8.0-prerelease-1"
 
 [workspace.dependencies]
 anyhow = "1"
+criterion = "0.6"
 assert_matches = "1"
 async-trait = "0.1"
 aws-lc-rs = "1.13.1"
