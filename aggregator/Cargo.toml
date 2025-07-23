@@ -131,3 +131,8 @@ rustc_version = { workspace = true }
 [[bench]]
 name = "benches"
 harness = false
+
+[[bin]]
+name = "message_sizes"
+path = "benches/bin/message_sizes.rs"
+required-features = ["test-util"]
