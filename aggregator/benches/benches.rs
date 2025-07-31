@@ -8,7 +8,7 @@ use janus_core::{
 use janus_messages::{
     ReportId, ReportMetadata, Role, TaskId, Time, PlaintextInputShare, InputShareAad,
 };
-use prio::vdaf::{prio3::{Prio3SumVec, optimal_chunk_length}, Vdaf};
+use prio::vdaf::{prio3::{Prio3SumVec, optimal_chunk_length}, Vdaf, AggregateShare, Collector, Aggregator};
 use prio::topology::ping_pong::PingPongTopology;
 use janus_messages::codec::{Decode, Encode, ParameterizedDecode};
 use std::hint::black_box;
@@ -165,6 +165,18 @@ fn bench_vdaf(c: &mut Criterion, input_length: usize, bitwidth: usize) {
                 
                 // Return the helper output share to prevent optimization
                 black_box(&transcript.helper_output_share)
+            });
+        })
+        .bench_function("aggregate", |b| {
+            // Benchmark aggregation cost - each server combining its output shares into aggregate share
+            b.iter(|| {
+                // Each server aggregates its own output shares
+                let leader_aggregate_share = vdaf.aggregate(
+                    &aggregation_param,
+                    [transcript.leader_output_share.clone()]
+                ).unwrap();
+                
+                black_box(leader_aggregate_share)
             });
         });
 }

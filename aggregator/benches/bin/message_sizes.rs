@@ -1,20 +1,31 @@
+use clap::Parser;
 use janus_core::{
     test_util::run_vdaf,
 };
 use janus_messages::{
-    ReportId, ReportMetadata, TaskId, Time,
+    ReportId, TaskId,
 };
 use itertools::iproduct;
 use janus_messages::codec::Encode;
 use prio::vdaf::prio3::{Prio3SumVec, optimal_chunk_length};
 use std::collections::HashMap;
 
+#[derive(Parser)]
+#[command(name = "message_sizes")]
+#[command(about = "Analyze message sizes for Prio3SumVec VDAF")]
+struct Args {
+    /// Output results in CSV format
+    #[arg(short, long)]
+    csv: bool,
+}
+
 #[derive(Debug)]
 struct NetworkMessages {
-    client_upload: HashMap<String, f64>,
-    server_to_server: HashMap<String, f64>,
-    collection: HashMap<String, f64>,
-    total: f64,
+    client_upload: HashMap<String, f64>,      // Per-client costs (linear in number of clients)
+    server_to_server: HashMap<String, f64>,   // Per-client costs (linear in number of clients)
+    collection: HashMap<String, f64>,         // Per-batch costs (constant regardless of number of clients)
+    total_per_client: f64,                    // Total per-client cost
+    total_per_batch: f64,                     // Total per-batch cost
 }
 
 impl NetworkMessages {
@@ -23,46 +34,70 @@ impl NetworkMessages {
             client_upload: HashMap::new(),
             server_to_server: HashMap::new(),
             collection: HashMap::new(),
-            total: 0.0,
+            total_per_client: 0.0,
+            total_per_batch: 0.0,
         }
     }
 
     fn add_client_upload(&mut self, name: &str, size_bytes: usize) {
         let size_kb = size_bytes as f64 / 1024.0;
         self.client_upload.insert(name.to_string(), size_kb);
-        self.total += size_kb;
+        self.total_per_client += size_kb;
     }
 
     fn add_server_to_server(&mut self, name: &str, size_bytes: usize) {
         let size_kb = size_bytes as f64 / 1024.0;
         self.server_to_server.insert(name.to_string(), size_kb);
-        self.total += size_kb;
+        self.total_per_client += size_kb;
     }
 
     fn add_collection(&mut self, name: &str, size_bytes: usize) {
         let size_kb = size_bytes as f64 / 1024.0;
         self.collection.insert(name.to_string(), size_kb);
-        self.total += size_kb;
+        self.total_per_batch += size_kb;
     }
 
-    fn print_breakdown(&self) {
+    fn print_breakdown(&self, input_length: usize, bitwidth: usize) {
         println!("=== Network Message Sizes (KB) ===");
-        println!("Total: {:.3} KB", self.total);
+        println!("Configuration: input_length={}, bitwidth={}\n", input_length, bitwidth);
         
-        println!("\n--- Client Upload ---");
+        // Calculate totals
+        let client_upload_total: f64 = self.client_upload.values().sum();
+        let server_to_server_total: f64 = self.server_to_server.values().sum();
+        let collection_total: f64 = self.collection.values().sum();
+        
+        println!("Client upload total (per-client): {:.3} KB", client_upload_total);
+        println!("Server-to-server total (per-client): {:.3} KB", server_to_server_total);
+        println!("Collection total (per-batch): {:.3} KB", collection_total);
+        
+        println!("\n--- Client Upload (Per-client costs) ---");
         for (name, size_kb) in &self.client_upload {
             println!("  {}: {:.3} KB", name, size_kb);
         }
         
-        println!("\n--- Server-to-Server (Ping-pong Protocol) ---");
+        println!("\n--- Server-to-Server (Per-client costs) ---");
         for (name, size_kb) in &self.server_to_server {
             println!("  {}: {:.3} KB", name, size_kb);
         }
         
-        println!("\n--- Collection ---");
+        println!("\n--- Collection (Per-batch costs) ---");
         for (name, size_kb) in &self.collection {
             println!("  {}: {:.3} KB", name, size_kb);
         }
+    }
+
+    fn to_csv_row(&self, input_length: usize, bitwidth: usize) -> String {
+        let client_upload_total: f64 = self.client_upload.values().sum();
+        let server_to_server_total: f64 = self.server_to_server.values().sum();
+        let collection_total: f64 = self.collection.values().sum();
+        
+        format!("{},{},{:.3},{:.3},{:.3}", 
+            bitwidth, 
+            input_length, 
+            client_upload_total, 
+            server_to_server_total, 
+            collection_total
+        )
     }
 }
 
@@ -72,12 +107,7 @@ fn measure_message_sizes(input_length: usize, bitwidth: usize) -> NetworkMessage
     // Setup metadata
     let task_id = TaskId::from([1u8; 32]);
     let report_id = ReportId::from([2u8; 16]);
-    let report_metadata = ReportMetadata::new(
-        report_id,
-        Time::from_seconds_since_epoch(1_000_000_000),
-        vec![], // No public extensions
-    );
-
+    
     // Create VDAF instance
     let chunk_length = optimal_chunk_length(input_length * bitwidth);
     let vdaf = Prio3SumVec::new_sum_vec(2, bitwidth, input_length, chunk_length).unwrap();
@@ -137,17 +167,37 @@ fn measure_message_sizes(input_length: usize, bitwidth: usize) -> NetworkMessage
 }
 
 fn main() {
-    println!("Prio3SumVec Message Size Analysis");
-    println!("================================\n");
+    let args = Args::parse();
+    
+    if !args.csv {
+        println!("Prio3SumVec Message Size Analysis");
+        println!("================================\n");
+    } else {
+        // CSV header
+        println!("bitwidth,length,client_upload_total,server_to_server_total,collection_total");
+    }
 
     //let input_lengths = vec![1, 8, 16, 64, 128];
     //let bitwidths = vec![1, 8];
-    let input_lengths = vec![1];
-    let bitwidths = vec![1];
+    let input_lengths = vec![1, 8, 16];
+    let bitwidths = vec![1, 8, 16];
 
-    for (length, bitwidth) in iproduct!(&input_lengths, &bitwidths) {
-        let messages = measure_message_sizes(*length, *bitwidth);
-        messages.print_breakdown();
-        println!("\n");
+    // Create all combinations and sort by bitwidth, then length
+    let mut combinations: Vec<_> = iproduct!(&input_lengths, &bitwidths)
+        .map(|(length, bitwidth)| (*length, *bitwidth))
+        .collect();
+    combinations.sort_by(|(length1, bitwidth1), (length2, bitwidth2)| {
+        bitwidth1.cmp(bitwidth2).then(length1.cmp(length2))
+    });
+
+    for (length, bitwidth) in combinations {
+        let messages = measure_message_sizes(length, bitwidth);
+        
+        if args.csv {
+            println!("{}", messages.to_csv_row(length, bitwidth));
+        } else {
+            messages.print_breakdown(length, bitwidth);
+            println!("\n");
+        }
     }
 } 
