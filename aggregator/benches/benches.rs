@@ -8,7 +8,7 @@ use janus_core::{
 use janus_messages::{
     ReportId, ReportMetadata, Role, TaskId, Time, PlaintextInputShare, InputShareAad,
 };
-use prio::vdaf::{prio3::{Prio3SumVec, optimal_chunk_length}, Vdaf, AggregateShare, Collector, Aggregator};
+use prio::vdaf::{prio3::{Prio3SumVec, optimal_chunk_length}, Vdaf, AggregateShare, Collector, Aggregator, Client};
 use prio::topology::ping_pong::PingPongTopology;
 use janus_messages::codec::{Decode, Encode, ParameterizedDecode};
 use std::hint::black_box;
@@ -72,6 +72,22 @@ fn bench_vdaf(c: &mut Criterion, input_length: usize, bitwidth: usize) {
     let group_name = format!("prio3/{}_inputs_{}_bits", input_length, bitwidth);
     
     c.benchmark_group(&group_name)
+        .bench_function("client_shard", |b| {
+            // Benchmark client encoding time - the shard function that creates input shares
+            let ctx = vdaf_application_context(&task_id);
+            
+            b.iter(|| {
+                // This is the client-side shard function that creates input shares from measurement
+                let (public_share, input_shares) = vdaf.shard(
+                    &ctx,
+                    &measurement,
+                    report_id.as_ref(),
+                ).unwrap();
+                
+                // Return all shares to prevent optimization
+                black_box((public_share, input_shares))
+            });
+        })
         .bench_function("decrypt_and_decode", |b| {
             b.iter(|| {
                 // Complete decoding workflow: HPKE + PlaintextInputShare + InputShare + PublicShare
@@ -182,8 +198,9 @@ fn bench_vdaf(c: &mut Criterion, input_length: usize, bitwidth: usize) {
 }
 
 fn run_benches(c: &mut Criterion) {
-    let length = vec![1, 8, 16, 64, 128];
-    let bitwidth = vec![1, 8];
+    //let length = vec![1, 2, 4, 8, 16, 32, 64];
+    let bitwidth = vec![1, 2, 4, 8, 16, 32, 64];
+    let length = vec![1];
 
     for (l, b) in iproduct!(&length, &bitwidth) {
         let chunk_length = optimal_chunk_length(l * b);

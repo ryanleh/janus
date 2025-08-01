@@ -179,8 +179,9 @@ fn main() {
 
     //let input_lengths = vec![1, 8, 16, 64, 128];
     //let bitwidths = vec![1, 8];
-    let input_lengths = vec![1, 8, 16];
-    let bitwidths = vec![1, 8, 16];
+    let bitwidths = vec![1];
+    //let bitwidths = vec![1, 10, 20, 30, 40, 50, 60];
+    let input_lengths = vec![1, 10, 20, 30, 40, 50, 60];
 
     // Create all combinations and sort by bitwidth, then length
     let mut combinations: Vec<_> = iproduct!(&input_lengths, &bitwidths)
